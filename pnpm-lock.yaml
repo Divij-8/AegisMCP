@@ -79,6 +79,18 @@ importers:
 
   packages/protocol: {}
 
+  tests/integration:
+    dependencies:
+      '@aegis/gateway':
+        specifier: workspace:*
+        version: link:../../apps/gateway
+      '@aegis/mock-mcp-server':
+        specifier: workspace:*
+        version: link:../../apps/mock-mcp-server
+      '@modelcontextprotocol/client':
+        specifier: ^2.0.0
+        version: 2.0.0
+
 packages:
 
   '@ampproject/remapping@2.3.0':

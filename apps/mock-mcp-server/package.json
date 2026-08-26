@@ -3,6 +3,9 @@
   "version": "0.0.1",
   "type": "module",
   "private": true,
+  "exports": {
+    "./app": "./src/app.ts"
+  },
   "scripts": {
     "build": "tsc --build",
     "dev": "tsx watch src/index.ts",
