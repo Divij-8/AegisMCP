@@ -2,5 +2,10 @@
   "name": "@aegis/integration-tests",
   "version": "0.0.1",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@aegis/gateway": "workspace:*",
+    "@aegis/mock-mcp-server": "workspace:*",
+    "@modelcontextprotocol/client": "^2.0.0"
+  }
 }

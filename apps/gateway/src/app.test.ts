@@ -1,7 +1,16 @@
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { buildApp } from "./app.js";
 
-const app = buildApp();
+let app: ReturnType<typeof buildApp>;
+let baseUrl: string;
+
+beforeAll(async () => {
+  app = buildApp();
+  await app.listen({ port: 0, host: "127.0.0.1" });
+  const address = app.server.address();
+  if (!address || typeof address === "string") throw new Error("no address");
+  baseUrl = `http://127.0.0.1:${address.port}`;
+});
 
 afterAll(async () => {
   await app.close();
@@ -35,24 +44,34 @@ describe("GET /health", () => {
 });
 
 describe("POST /mcp", () => {
-  it("returns 501", async () => {
-    const response = await app.inject({
+  it("returns 502 when upstream is unavailable", async () => {
+    const response = await fetch(`${baseUrl}/mcp`, {
       method: "POST",
-      url: "/mcp",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      }),
     });
 
-    expect(response.statusCode).toBe(501);
+    expect(response.status).toBe(502);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body).toHaveProperty("error", "BadGateway");
   });
 
-  it("returns NotImplemented error structure", async () => {
-    const response = await app.inject({
+  it("does not crash on upstream failure", async () => {
+    await fetch(`${baseUrl}/mcp`, {
       method: "POST",
-      url: "/mcp",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      }),
     });
 
-    expect(response.json()).toEqual({
-      error: "NotImplemented",
-      message: "MCP proxy not yet implemented",
-    });
+    const healthResponse = await fetch(`${baseUrl}/health`);
+    expect(healthResponse.status).toBe(200);
   });
 });
