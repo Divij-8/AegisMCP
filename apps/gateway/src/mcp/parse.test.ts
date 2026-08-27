@@ -47,7 +47,10 @@ describe("parseMcpRequest", () => {
     });
 
     it("returns INVALID_REQUEST when jsonrpc is not '2.0'", () => {
-      const result = parseMcpRequest(buf({ jsonrpc: "1.0", id: 1, method: "tools/list" }), identity);
+      const result = parseMcpRequest(
+        buf({ jsonrpc: "1.0", id: 1, method: "tools/list" }),
+        identity,
+      );
       expect(result.kind).toBe("error");
       if (result.kind === "error") {
         expect(result.error.code).toBe(INVALID_REQUEST);
@@ -323,10 +326,7 @@ describe("serializeJsonRpcError", () => {
   });
 
   it("echoes the original request id", () => {
-    const body = serializeJsonRpcError(
-      { code: INVALID_PARAMS, message: "Invalid params" },
-      42,
-    );
+    const body = serializeJsonRpcError({ code: INVALID_PARAMS, message: "Invalid params" }, 42);
     const parsed = JSON.parse(body);
     expect(parsed.id).toBe(42);
     expect(parsed.error.code).toBe(-32602);
@@ -342,10 +342,7 @@ describe("serializeJsonRpcError", () => {
   });
 
   it("omits data field when undefined", () => {
-    const body = serializeJsonRpcError(
-      { code: INVALID_REQUEST, message: "Invalid Request" },
-      null,
-    );
+    const body = serializeJsonRpcError({ code: INVALID_REQUEST, message: "Invalid Request" }, null);
     const parsed = JSON.parse(body);
     expect(parsed.error).not.toHaveProperty("data");
   });

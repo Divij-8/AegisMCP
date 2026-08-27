@@ -14,12 +14,7 @@ import {
   PROTOCOL_VERSION_META_KEY,
 } from "@modelcontextprotocol/server";
 import type { TrustedIdentityConfig } from "../security/identity.js";
-import type {
-  NormalizationError,
-  ParseResult,
-  RequestId,
-  SecurityContext,
-} from "./types.js";
+import type { NormalizationError, ParseResult, RequestId, SecurityContext } from "./types.js";
 
 function extractProtocolVersion(params: Record<string, unknown> | undefined): string | undefined {
   if (params == null) return undefined;
@@ -66,10 +61,7 @@ function extractToolFields(
  * @param identity - Trusted identity configuration (from server config, not client)
  * @returns ParseResult discriminated union
  */
-export function parseMcpRequest(
-  body: Buffer,
-  identity: TrustedIdentityConfig,
-): ParseResult {
+export function parseMcpRequest(body: Buffer, identity: TrustedIdentityConfig): ParseResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body.toString("utf-8"));
@@ -96,7 +88,8 @@ export function parseMcpRequest(
     };
   }
 
-  const hasId = "id" in envelope && (typeof envelope["id"] === "string" || typeof envelope["id"] === "number");
+  const hasId =
+    "id" in envelope && (typeof envelope["id"] === "string" || typeof envelope["id"] === "number");
   const hasMethod = typeof envelope["method"] === "string";
 
   if (!hasMethod) {
@@ -127,10 +120,7 @@ export function parseMcpRequest(
       };
     }
     if ("arguments" in params && params["arguments"] != null) {
-      if (
-        typeof params["arguments"] !== "object" ||
-        Array.isArray(params["arguments"])
-      ) {
+      if (typeof params["arguments"] !== "object" || Array.isArray(params["arguments"])) {
         return {
           kind: "error",
           error: { code: INVALID_PARAMS, message: "Invalid params" },
