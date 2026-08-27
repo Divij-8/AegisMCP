@@ -18,7 +18,10 @@ beforeAll(async () => {
 
   const upstreamUrl = `http://127.0.0.1:${mockAddr.port}/mcp`;
 
-  gateway = buildGateway({ upstreamUrl });
+  gateway = buildGateway({
+    upstreamUrl,
+    policies: [{ id: "allow-all", decision: "ALLOW", match: {}, reason: "e2e test — allow all" }],
+  });
   await gateway.listen({ port: 0, host: "127.0.0.1" });
   const gwAddr = gateway.server.address();
   if (!gwAddr || typeof gwAddr === "string") throw new Error("no gateway address");

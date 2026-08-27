@@ -55,9 +55,10 @@ describe("POST /mcp", () => {
       }),
     });
 
-    expect(response.status).toBe(502);
+    expect(response.status).toBe(200);
     const body = (await response.json()) as Record<string, unknown>;
-    expect(body).toHaveProperty("error", "BadGateway");
+    expect(body).toHaveProperty("error");
+    expect(body).toHaveProperty("id", 1);
   });
 
   it("does not crash on upstream failure", async () => {
