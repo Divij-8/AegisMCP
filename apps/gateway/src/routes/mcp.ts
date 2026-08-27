@@ -1,9 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { proxyMcpRequest } from "../proxy/mcp-proxy.js";
+import type { TrustedIdentityConfig } from "../security/identity.js";
 
 export interface McpRoutesOptions {
   upstreamUrl: string;
   upstreamTimeoutMs: number;
+  identity: TrustedIdentityConfig;
 }
 
 export async function mcpRoutes(
