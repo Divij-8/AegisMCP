@@ -75,3 +75,74 @@ describe("POST /mcp", () => {
     expect(healthResponse.status).toBe(200);
   });
 });
+
+describe("POST /mcp - parse rejection", () => {
+  it("rejects invalid JSON with JSON-RPC parse error", async () => {
+    const response = await fetch(`${baseUrl}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{invalid json",
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body).toEqual({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32700, message: "Parse error" },
+    });
+  });
+
+  it("rejects missing jsonrpc with invalid request error", async () => {
+    const response = await fetch(`${baseUrl}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: 1, method: "tools/list" }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body).toEqual({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: "Invalid Request" },
+    });
+  });
+
+  it("rejects missing method with invalid request error", async () => {
+    const response = await fetch(`${baseUrl}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1 }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body).toEqual({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: "Invalid Request" },
+    });
+  });
+
+  it("rejects tools/call without name with invalid params error", async () => {
+    const response = await fetch(`${baseUrl}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { arguments: {} },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body).toEqual({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32602, message: "Invalid params" },
+    });
+  });
+});
