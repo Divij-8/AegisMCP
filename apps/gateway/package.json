@@ -4,23 +4,32 @@
   "type": "module",
   "private": true,
   "exports": {
-    "./app": "./src/app.ts"
+    "./app": "./src/app.ts",
+    "./db": "./src/db/migrate.ts",
+    "./repositories/pg": "./src/repositories/pg.ts",
+    "./security": "./src/security/index.ts"
   },
   "scripts": {
     "build": "tsc --build",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
+    "db:migrate": "tsx src/db/migrate.ts",
+    "credential:create": "tsx src/credentials/cli.ts create",
+    "credential:revoke": "tsx src/credentials/cli.ts revoke",
+    "credential:list": "tsx src/credentials/cli.ts list",
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "fastify": "^5.12.0",
     "@aegis/protocol": "workspace:*",
-    "@modelcontextprotocol/server": "^2.0.0"
+    "@modelcontextprotocol/server": "^2.0.0",
+    "fastify": "^5.12.0",
+    "pg": "^8.23.0"
   },
   "devDependencies": {
-    "tsx": "^4.19.0",
+    "@modelcontextprotocol/client": "^2.0.0",
     "@types/node": "^24.0.0",
-    "@modelcontextprotocol/client": "^2.0.0"
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.19.0"
   }
 }
