@@ -13,6 +13,7 @@ import {
   INVALID_PARAMS,
   PROTOCOL_VERSION_META_KEY,
 } from "@modelcontextprotocol/server";
+import { SUPPORTED_PROTOCOL_VERSIONS } from "@aegis/protocol";
 import type { TrustedIdentityConfig } from "../security/identity.js";
 import type { NormalizationError, ParseResult, RequestId, SecurityContext } from "./types.js";
 
@@ -111,6 +112,23 @@ export function parseMcpRequest(body: Buffer, identity: TrustedIdentityConfig): 
       : undefined;
 
   const protocolVersion = extractProtocolVersion(params);
+
+  // Explicit protocol-version gate: a request that declares a version we do not
+  // support is rejected here rather than being extracted and forwarded unchecked.
+  // Absence of a version declaration is accepted — absence is not legacy.
+  if (
+    protocolVersion !== undefined &&
+    !(SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(protocolVersion)
+  ) {
+    return {
+      kind: "error",
+      error: {
+        code: INVALID_REQUEST,
+        message: "Unsupported protocol version",
+        data: { requested: protocolVersion, supported: SUPPORTED_PROTOCOL_VERSIONS },
+      },
+    };
+  }
 
   if (method === "tools/call") {
     if (params == null || typeof params["name"] !== "string") {

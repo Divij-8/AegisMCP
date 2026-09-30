@@ -237,20 +237,92 @@ describe("parseMcpRequest", () => {
       }
     });
 
-    it("extracts from params.protocolVersion (legacy)", () => {
+    it("extracts from params.protocolVersion (supported)", () => {
       const result = parseMcpRequest(
         buf({
           jsonrpc: "2.0",
           id: 1,
           method: "tools/list",
-          params: { protocolVersion: "2025-11-25" },
+          params: { protocolVersion: "2026-07-28" },
         }),
         identity,
       );
       expect(result.kind).toBe("request");
       if (result.kind === "request") {
-        expect(result.context.protocolVersion).toBe("2025-11-25");
+        expect(result.context.protocolVersion).toBe("2026-07-28");
       }
+    });
+
+    it("rejects legacy protocol versions with INVALID_REQUEST", () => {
+      for (const legacy of ["2025-11-25", "2025-03-26", "2024-11-05"]) {
+        const result = parseMcpRequest(
+          buf({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/list",
+            params: { protocolVersion: legacy },
+          }),
+          identity,
+        );
+        expect(result.kind, `version ${legacy} should be rejected`).toBe("error");
+        if (result.kind === "error") {
+          expect(result.error.code).toBe(INVALID_REQUEST);
+          expect(result.error.message).toBe("Unsupported protocol version");
+          expect(result.error.data).toEqual({
+            requested: legacy,
+            supported: ["2026-07-28"],
+          });
+        }
+      }
+    });
+
+    it("rejects unsupported future protocol versions", () => {
+      const result = parseMcpRequest(
+        buf({
+          jsonrpc: "2.0",
+          id: "req-9",
+          method: "tools/list",
+          params: {
+            _meta: { "io.modelcontextprotocol/protocolVersion": "2999-01-01" },
+          },
+        }),
+        identity,
+      );
+      expect(result.kind).toBe("error");
+      if (result.kind === "error") {
+        expect(result.error.code).toBe(INVALID_REQUEST);
+      }
+    });
+
+    it("rejection echoes the original request id when serialized", () => {
+      const result = parseMcpRequest(
+        buf({
+          jsonrpc: "2.0",
+          id: "legacy-client",
+          method: "tools/list",
+          params: { protocolVersion: "2025-03-26" },
+        }),
+        identity,
+      );
+      expect(result.kind).toBe("error");
+      if (result.kind === "error") {
+        const body = JSON.parse(serializeJsonRpcError(result.error, "legacy-client"));
+        expect(body.id).toBe("legacy-client");
+        expect(body.error.code).toBe(-32600);
+        expect(body.error.message).toBe("Unsupported protocol version");
+      }
+    });
+
+    it("does not reject notifications with unsupported versions (no id → no context)", () => {
+      const result = parseMcpRequest(
+        buf({
+          jsonrpc: "2.0",
+          method: "notifications/cancelled",
+          params: { protocolVersion: "2025-03-26" },
+        }),
+        identity,
+      );
+      expect(result.kind).toBe("notification");
     });
 
     it("returns undefined when no version present", () => {
