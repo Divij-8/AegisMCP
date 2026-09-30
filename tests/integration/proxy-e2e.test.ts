@@ -20,7 +20,10 @@ beforeAll(async () => {
 
   gateway = buildGateway({
     upstreamUrl,
-    policies: [{ id: "allow-all", decision: "ALLOW", match: {}, reason: "e2e test — allow all" }],
+    databaseUrl: null, // legacy e2e: no persistence, keep this suite DB-free
+    policies: [
+      { id: "e2e-allow-all", decision: "ALLOW", match: {}, reason: "e2e test — allow all" },
+    ],
   });
   await gateway.listen({ port: 0, host: "127.0.0.1" });
   const gwAddr = gateway.server.address();
