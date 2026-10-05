@@ -107,6 +107,22 @@ importers:
         specifier: ^8.23.1
         version: 8.23.1
 
+  tests/security:
+    dependencies:
+      '@aegis/gateway':
+        specifier: workspace:*
+        version: link:../../apps/gateway
+      '@aegis/mock-mcp-server':
+        specifier: workspace:*
+        version: link:../../apps/mock-mcp-server
+      pg:
+        specifier: ^8.23.0
+        version: 8.23.0
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.23.1
+        version: 8.23.1
+
 packages:
 
   '@ampproject/remapping@2.3.0':
