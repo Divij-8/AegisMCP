@@ -37,6 +37,7 @@ packages/
   protocol/         Shared protocol constants
 tests/
   integration/      Cross-package end-to-end suites (PostgreSQL-backed)
+  security/         Adversarial security regression suite (attacks, not happy paths)
 ```
 
 ## Architecture
@@ -92,6 +93,56 @@ flowchart LR
   audit rows never contain raw arguments.
 
 See [`SECURITY.md`](SECURITY.md) and [`docs/threat-model.md`](docs/threat-model.md).
+
+## Security guarantees
+
+Each guarantee below is an adversarial regression test that drives the **real**
+gateway over HTTP against PostgreSQL — not a mock of the security path. If a
+change weakens any of them, `pnpm run verify` fails.
+
+| # | Guarantee | Enforced by | Regression test |
+|---|-----------|-------------|-----------------|
+| 1 | **Fail closed** — no policy match denies; an unavailable approval store blocks; an unreachable database refuses startup; an invalid `AUTH_REQUIRED` value throws instead of silently disabling auth | `policy/engine.ts`, `approvals/service.ts`, `app.ts`, `config/index.ts` | `error-handling.security.test.ts`, `policy-bypass.security.test.ts` |
+| 2 | **No authentication bypass** — missing, malformed, expired, or revoked credentials are rejected; identity never comes from the request body | `security/authenticator.ts` | `authentication.security.test.ts` |
+| 3 | **Fixed precedence** — `DENY > REQUIRE_APPROVAL > ALLOW`; priority and argument constraints cannot override it | `policy/engine.ts` | `policy-bypass.security.test.ts` |
+| 4 | **Risk only strengthens** — escalation can never turn a DENY into an ALLOW | `risk/engine.ts` | `policy-bypass.security.test.ts` |
+| 5 | **Pending never executes** — a pending/denied/expired approval never reaches upstream, even if its id is presented | `routes/mcp.ts` | `approvals.security.test.ts` |
+| 6 | **Approvals are bound & single-use** — tied to `(agent, server, method, tool, argument-hash)` and consumed atomically; replays are refused; exactly one execution under concurrent consumption | `approvals/service.ts`, `approvals/redact.ts` | `approvals.security.test.ts` |
+| 7 | **No secret persistence / redaction** — credential secrets are never stored or audited; tool arguments are redacted before persistence | `security/hash.ts`, `approvals/redact.ts` | `redaction.security.test.ts`, `demo.security.test.ts` |
+| 8 | **No privilege escalation** — an `AGENT` credential gets `403` on the control plane; `OPERATOR` cannot mint `ADMIN`/`OPERATOR` principals | `security/rbac.ts`, `routes/admin.ts` | `rbac.security.test.ts` |
+| 9 | **Bounded input** — oversized bodies, oversized arguments, malformed JSON-RPC, and unknown protocol versions are refused without crashing | `routes/mcp.ts`, `mcp/parse.ts` | `fuzzing.security.test.ts` |
+
+## Security demo
+
+A self-contained, reproducible demonstration of the full lifecycle: an agent
+tries to **delete a production resource**, the gateway intercepts it, a human
+approves it, it executes **exactly once**, the replay is refused, and the whole
+sequence is auditable.
+
+```bash
+export DATABASE_URL="postgres://aegis:aegis@127.0.0.1:5432/aegis"
+pnpm --filter @aegis/security-tests exec vitest run demo.security.test.ts
+```
+
+What the demo asserts, step by step:
+
+1. The agent authenticates with a real credential and calls `delete_resource`.
+2. Policy returns `REQUIRE_APPROVAL`; the response is JSON-RPC error `-32002`
+   carrying a `PENDING` approval id (`apr_<32 hex>`) and an expiry.
+3. **The upstream MCP server is never contacted** (`connections === 0`).
+4. The stored approval is bound to the agent, redacted (`"password":
+   "[REDACTED]"`), and unconsumed.
+5. The administrator sees the pending approval, its justification, and the
+   policy that triggered it over `/admin/approvals`.
+6. The administrator approves it.
+7. The agent retries **the same request** with `X-Aegis-Approval-Id`; binding
+   verifies, the tool executes once (`connections === 1`), and the approval is
+   atomically consumed.
+8. A replay of the same request is refused and does not execute again.
+9. Audit records `approval_created`, `approval_approved`, and the `request`
+   outcomes (`blocked` then `forwarded`) with agent id, decision, and risk
+   level (`HIGH` for a destructive tool) — and **no secret appears anywhere**.
+
 
 ## Authentication
 
@@ -279,12 +330,23 @@ See [`.env.example`](.env.example). Highlights:
 ## Running tests
 
 ```bash
-pnpm run test          # unit + integration (integration needs DATABASE_URL)
+pnpm run test          # unit + integration + security (integration needs DATABASE_URL)
 pnpm run typecheck
 pnpm run lint
 pnpm run format:check
-pnpm run check         # all of the above in sequence
+pnpm run check         # typecheck + lint + format:check + test
 ```
+
+### One-command validation
+
+```bash
+pnpm run verify        # typecheck + lint + format:check + build + test
+```
+
+`pnpm run verify` is the single gate that must pass before merging. It requires
+`DATABASE_URL` to point at a disposable PostgreSQL database; database-backed
+suites skip themselves when it is unset (so a fresh checkout still runs the
+pure unit tests).
 
 ## Docker deployment
 
