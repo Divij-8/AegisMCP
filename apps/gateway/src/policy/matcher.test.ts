@@ -173,4 +173,60 @@ describe("matchesPolicy", () => {
       expect(matchesPolicy(customContext, { method: "tools/call" })).toBe(false);
     });
   });
+
+  describe("argument constraints", () => {
+    it("matches when an equals constraint is satisfied", () => {
+      expect(matchesPolicy(baseContext, { arguments: { message: { equals: "hello" } } })).toBe(
+        true,
+      );
+    });
+
+    it("does not match when an equals constraint differs", () => {
+      expect(matchesPolicy(baseContext, { arguments: { message: { equals: "bye" } } })).toBe(false);
+    });
+
+    it("matches when a oneOf constraint includes the value", () => {
+      expect(
+        matchesPolicy(baseContext, { arguments: { message: { oneOf: ["hi", "hello"] } } }),
+      ).toBe(true);
+    });
+
+    it("does not match when oneOf excludes the value", () => {
+      expect(matchesPolicy(baseContext, { arguments: { message: { oneOf: ["hi", "bye"] } } })).toBe(
+        false,
+      );
+    });
+
+    it("does not match when the constrained argument is absent", () => {
+      expect(
+        matchesPolicy(
+          { ...baseContext, toolArguments: { other: 1 } },
+          { arguments: { message: { equals: "hello" } } },
+        ),
+      ).toBe(false);
+    });
+
+    it("does not match when there are no tool arguments at all", () => {
+      expect(
+        matchesPolicy(
+          { ...baseContext, toolArguments: undefined },
+          { arguments: { message: { equals: "hello" } } },
+        ),
+      ).toBe(false);
+    });
+
+    it("supports structural equality for object values", () => {
+      const context: SecurityContext = {
+        ...baseContext,
+        toolArguments: { filter: { a: 1, b: 2 } },
+      };
+      expect(matchesPolicy(context, { arguments: { filter: { equals: { b: 2, a: 1 } } } })).toBe(
+        true,
+      );
+    });
+
+    it("fails closed for an empty constraint object", () => {
+      expect(matchesPolicy(baseContext, { arguments: { message: {} } })).toBe(false);
+    });
+  });
 });
