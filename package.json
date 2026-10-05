@@ -18,7 +18,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "clean": "pnpm -r run clean && rm -rf node_modules",
-    "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run test"
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run test",
+    "verify": "pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run build && pnpm run test"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
