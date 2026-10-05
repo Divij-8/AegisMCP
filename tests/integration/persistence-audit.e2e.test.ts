@@ -70,11 +70,14 @@ d("gateway persistence end-to-end (PostgreSQL)", () => {
       databaseUrl: DATABASE_URL,
       upstreamUrl,
       identity,
+      // A tool name unique to this suite keeps the policy assertion
+      // independent of other suites sharing the database: the gateway loads
+      // every enabled policy, so no foreign ALLOW may match this tool.
       policies: [
         {
           id: "e2e-allow-echo",
           decision: "ALLOW",
-          match: { tool: "echo" },
+          match: { tool: "e2e-persist-echo" },
           reason: "seeded allow",
         },
       ],
@@ -91,7 +94,7 @@ d("gateway persistence end-to-end (PostgreSQL)", () => {
         jsonrpc: "2.0",
         id: "e2e-1",
         method: "tools/call",
-        params: { name: "echo", arguments: { secret: "DO-NOT-PERSIST" } },
+        params: { name: "e2e-persist-echo", arguments: { secret: "DO-NOT-PERSIST" } },
       }),
     });
     // (request id is also namespaced for the same isolation reason)
@@ -126,15 +129,19 @@ d("gateway persistence end-to-end (PostgreSQL)", () => {
   it("disabling a policy in the DB changes gateway decisions after boot", async () => {
     await clean();
 
+    // A tool name unique to this suite keeps the DENY assertion independent of
+    // other suites sharing the database (no foreign policy can match it).
+    const tool = "e2e-deny-check";
+
     const gateway = buildApp({
       databaseUrl: DATABASE_URL,
       upstreamUrl,
       identity,
       policies: [
         {
-          id: "e2e-allow-echo",
+          id: "e2e-allow-denycheck",
           decision: "ALLOW",
-          match: { tool: "echo" },
+          match: { tool },
           reason: "seeded allow",
         },
       ],
@@ -144,10 +151,10 @@ d("gateway persistence end-to-end (PostgreSQL)", () => {
     const addr = gateway.server.address();
     const url = `http://127.0.0.1:${addr && typeof addr !== "string" ? addr.port : 0}/mcp`;
 
-    // Disable every enabled policy (the DB may also hold rows from the
-    // other DB suite — the gateway loads all enabled rows, so the reload
-    // must see an empty set for DENY to be guaranteed).
-    await pool.query("UPDATE policies SET enabled = false");
+    // Disable only this suite's policies (scoped: never mutate other suites'
+    // rows in the shared database). The unique tool name guarantees the request
+    // then falls back to the fail-closed default DENY.
+    await pool.query("UPDATE policies SET enabled = false WHERE id LIKE 'e2e-%'");
     // Runtime reload picks up the DB change without restart.
     const persistence = (
       gateway as unknown as { persistence: { policyStore: { reloadSafe(): Promise<boolean> } } }
@@ -162,7 +169,7 @@ d("gateway persistence end-to-end (PostgreSQL)", () => {
         jsonrpc: "2.0",
         id: 5,
         method: "tools/call",
-        params: { name: "echo", arguments: {} },
+        params: { name: tool, arguments: {} },
       }),
     });
 
