@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { BufferedAuditSink } from "./sink.js";
-import type { AuditEventRepository } from "../repositories/types.js";
+import type { AuditEventRepository, Page } from "../repositories/types.js";
 import type { AuditEvent } from "./types.js";
 
 function makeEvent(overrides?: Partial<AuditEvent>): AuditEvent {
@@ -32,6 +32,14 @@ class FakeAuditRepository implements AuditEventRepository {
       throw new Error("db unavailable");
     }
     this.batches.push([...events]);
+  }
+
+  async list(): Promise<Page<AuditEvent & { id: string }>> {
+    return { items: [], total: 0, limit: 0, offset: 0 };
+  }
+
+  async findById(): Promise<(AuditEvent & { id: string }) | null> {
+    return null;
   }
 }
 
