@@ -26,6 +26,12 @@ d("persistence + audit foundation (PostgreSQL)", () => {
   });
 
   afterAll(async () => {
+    // Remove this suite's rows so a later suite never sees leftover enabled
+    // policies (the gateway loads every enabled policy from the database).
+    await pool.query("DELETE FROM audit_events WHERE agent_id = 'int-agent'");
+    await pool.query("DELETE FROM policies WHERE id LIKE 'repo-%'");
+    await pool.query("DELETE FROM agents WHERE id LIKE 'int-%'");
+    await pool.query("DELETE FROM mcp_servers WHERE id LIKE 'int-%'");
     await pool.end();
   });
 
