@@ -79,6 +79,22 @@ export const config = {
    * credentials. Plan a pepper change together with credential rotation.
    */
   credentialPepper: process.env.CREDENTIAL_PEPPER ?? "",
+  /**
+   * Approval workflow tuning. TTL is the lifetime of a newly created approval;
+   * the max caps any per-request override so an approval can never be made
+   * effectively permanent.
+   */
+  approvalTtlMs: Number(process.env.APPROVAL_TTL_MS ?? 900_000),
+  approvalMaxTtlMs: Number(process.env.APPROVAL_MAX_TTL_MS ?? 86_400_000),
+  /**
+   * Risk engine. Enabled by default; can only strengthen policy decisions.
+   * Set RISK_ENGINE=false to disable (e.g. to debug policy in isolation).
+   */
+  riskEnabled: (process.env.RISK_ENGINE ?? "true").trim().toLowerCase() !== "false",
+  /** Maximum accepted MCP request body size, in bytes. */
+  maxRequestBodyBytes: Number(process.env.MAX_REQUEST_BODY_BYTES ?? 1_048_576),
+  /** Maximum accepted MCP tool-arguments size, in bytes. */
+  maxToolArgumentBytes: Number(process.env.MAX_TOOL_ARGUMENT_BYTES ?? 262_144),
 } as const;
 
 export type AppConfig = typeof config;
