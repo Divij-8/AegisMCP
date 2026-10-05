@@ -162,6 +162,7 @@ describe("DbAgentAuthenticator", () => {
       },
       create: (credential) => repository.create(credential),
       revoke: (keyId, revokedAt) => repository.revoke(keyId, revokedAt),
+      revokeAll: (agentId, revokedAt) => repository.revokeAll(agentId, revokedAt),
       listByAgent: (agentId) => repository.listByAgent(agentId),
     };
 
