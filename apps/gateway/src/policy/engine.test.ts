@@ -272,4 +272,61 @@ describe("PolicyEngine", () => {
       ).toThrow(/duplicate id/);
     });
   });
+
+  describe("disabled policies", () => {
+    it("ignores a disabled policy and falls back to the default DENY", () => {
+      const engine = new PolicyEngine([
+        policy({ id: "disabled-allow", decision: "ALLOW", match: {}, enabled: false }),
+      ]);
+      expect(engine.evaluate(baseContext).decision).toBe("DENY");
+      expect(engine.evaluate(baseContext).policyId).toBeNull();
+    });
+
+    it("ignores a disabled DENY policy", () => {
+      const engine = new PolicyEngine([
+        policy({ id: "disabled-deny", decision: "DENY", match: {}, enabled: false }),
+        policy({ id: "allow", decision: "ALLOW", match: {} }),
+      ]);
+      expect(engine.evaluate(baseContext).decision).toBe("ALLOW");
+    });
+  });
+
+  describe("argument-scoped policies", () => {
+    it("applies an ALLOW only when the argument constraint matches", () => {
+      const engine = new PolicyEngine([
+        policy({
+          id: "allow-safe-write",
+          decision: "ALLOW",
+          match: { tool: "write", arguments: { mode: { equals: "append" } } },
+        }),
+      ]);
+      const safe: SecurityContext = {
+        ...baseContext,
+        method: "tools/call",
+        toolName: "write",
+        toolArguments: { mode: "append" },
+      };
+      const unsafe: SecurityContext = { ...safe, toolArguments: { mode: "overwrite" } };
+      expect(engine.evaluate(safe).decision).toBe("ALLOW");
+      expect(engine.evaluate(unsafe).decision).toBe("DENY");
+    });
+
+    it("never lets an argument-scoped ALLOW beat a broad DENY", () => {
+      const engine = new PolicyEngine([
+        policy({
+          id: "allow-append",
+          decision: "ALLOW",
+          match: { arguments: { mode: { equals: "append" } } },
+        }),
+        policy({ id: "deny-all-writes", decision: "DENY", match: { tool: "write" } }),
+      ]);
+      const context: SecurityContext = {
+        ...baseContext,
+        toolName: "write",
+        toolArguments: { mode: "append" },
+      };
+      expect(engine.evaluate(context).decision).toBe("DENY");
+      expect(engine.evaluate(context).policyId).toBe("deny-all-writes");
+    });
+  });
 });
