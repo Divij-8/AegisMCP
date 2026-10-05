@@ -6,6 +6,7 @@
  */
 
 export * from "./identity.js";
+export * from "./rbac.js";
 export * from "./credential.js";
 export * from "./hash.js";
 export * from "./authenticator.js";
