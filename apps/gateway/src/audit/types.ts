@@ -7,6 +7,7 @@
  */
 
 import type { PolicyDecision } from "../policy/types.js";
+import type { RiskLevel } from "../risk/types.js";
 
 /** What kind of MCP message produced this event. */
 export type AuditEventType =
@@ -15,7 +16,17 @@ export type AuditEventType =
   /** An MCP notification. */
   | "notification"
   /** An authentication gate outcome (Phase 5). */
-  | "auth";
+  | "auth"
+  /** A control-plane (administrative) operation. */
+  | "admin"
+  /** A REQUIRE_APPROVAL decision created a PENDING approval. */
+  | "approval_created"
+  /** An administrator approved a pending approval. */
+  | "approval_approved"
+  /** An administrator denied a pending approval. */
+  | "approval_denied"
+  /** A pending approval passed its expiry without a decision. */
+  | "approval_expired";
 
 /** Terminal outcome of the gateway's handling of the message. */
 export type AuditOutcome =
@@ -26,7 +37,9 @@ export type AuditOutcome =
   /** Forwarding failed before an upstream status existed (502/504). */
   | "upstream_error"
   /** Rejected by the authentication gate before policy evaluation. */
-  | "auth_failed";
+  | "auth_failed"
+  /** Awaiting a human decision; nothing has executed and nothing has failed. */
+  | "pending";
 
 /**
  * Precise internal reason an authentication attempt failed.
@@ -96,6 +109,13 @@ export interface AuditEvent {
   readonly keyId?: string;
   /** Set for event_type "auth" only. */
   readonly authFailureReason?: AuthFailureReason;
+  /**
+   * Public approval id for approval-lifecycle events and for requests that were
+   * gated on an approval. Never secret material.
+   */
+  readonly approvalId?: string;
+  /** Risk level computed after policy evaluation (Phase 5). */
+  readonly riskLevel?: RiskLevel;
   /** Future slot — never set today. */
   readonly toolArgumentsRedaction?: ToolArgumentsRedaction;
 }
