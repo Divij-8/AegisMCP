@@ -68,6 +68,7 @@ describe("runCredentialCli create", () => {
         throw new Error("insert failed");
       },
       revoke: async () => false,
+      revokeAll: async () => 0,
       listByAgent: async () => [],
     };
     const repositories = {
