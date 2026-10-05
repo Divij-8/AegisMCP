@@ -45,5 +45,37 @@ export function validatePolicies(policies: Policy[]): void {
     if (typeof policy.reason !== "string" || policy.reason.trim() === "") {
       throw new Error(`${label} ("${policy.id}"): reason must be a non-empty string`);
     }
+
+    if (policy.enabled !== undefined && typeof policy.enabled !== "boolean") {
+      throw new Error(`${label} ("${policy.id}"): enabled must be a boolean`);
+    }
+
+    validateArgumentConstraints(policy, label);
+  }
+}
+
+function validateArgumentConstraints(policy: Policy, label: string): void {
+  const constraints = (policy.match as { arguments?: unknown }).arguments;
+  if (constraints === undefined) return;
+
+  if (typeof constraints !== "object" || constraints === null || Array.isArray(constraints)) {
+    throw new Error(`${label} ("${policy.id}"): match.arguments must be an object`);
+  }
+
+  for (const [key, raw] of Object.entries(constraints as Record<string, unknown>)) {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      throw new Error(`${label} ("${policy.id}"): match.arguments.${key} must be an object`);
+    }
+    const constraint = raw as Record<string, unknown>;
+    const hasEquals = "equals" in constraint;
+    const hasOneOf = "oneOf" in constraint;
+    if (hasEquals === hasOneOf) {
+      throw new Error(
+        `${label} ("${policy.id}"): match.arguments.${key} must set exactly one of equals/oneOf`,
+      );
+    }
+    if (hasOneOf && !Array.isArray(constraint["oneOf"])) {
+      throw new Error(`${label} ("${policy.id}"): match.arguments.${key}.oneOf must be an array`);
+    }
   }
 }
