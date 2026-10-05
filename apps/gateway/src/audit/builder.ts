@@ -3,9 +3,11 @@
  * PolicyEvaluation, and transport outcomes to AuditEvent data.
  */
 
-import type { AuditEvent, AuditOutcome, AuthFailureReason } from "./types.js";
+import type { AuditEvent, AuditEventType, AuditOutcome, AuthFailureReason } from "./types.js";
 import type { SecurityContext } from "../mcp/types.js";
 import type { PolicyEvaluation } from "../policy/types.js";
+import type { ApprovalRecord } from "../approvals/types.js";
+import type { RiskLevel } from "../risk/types.js";
 
 export interface NotificationAuditInput {
   /** Notification method (e.g. "notifications/cancelled"). */
@@ -23,6 +25,10 @@ export function buildRequestAuditEvent(input: {
   outcome: AuditOutcome;
   upstreamStatus: number | null;
   latencyMs: number;
+  /** Public approval id when the request was gated on (or used) an approval. */
+  approvalId?: string;
+  /** Risk level computed after policy evaluation. */
+  riskLevel?: RiskLevel;
 }): AuditEvent {
   const { context, evaluation, outcome, upstreamStatus, latencyMs } = input;
   return {
@@ -39,6 +45,86 @@ export function buildRequestAuditEvent(input: {
     outcome,
     upstreamStatus,
     latencyMs,
+    ...(input.approvalId !== undefined ? { approvalId: input.approvalId } : {}),
+    ...(input.riskLevel !== undefined ? { riskLevel: input.riskLevel } : {}),
+  };
+}
+
+/**
+ * Build an audit event for a control-plane operation.
+ *
+ * `action` is a stable verb such as "policy.create" or "approval.approve".
+ * The actor is the authenticated administrator; no request body is recorded.
+ */
+export function buildAdminAuditEvent(input: {
+  action: string;
+  outcome: "forwarded" | "blocked";
+  actorId: string;
+  serverId: string;
+  occurredAt: number;
+  latencyMs: number;
+  detail?: string;
+}): AuditEvent {
+  return {
+    eventType: "admin",
+    requestId: null,
+    occurredAt: input.occurredAt,
+    agentId: input.actorId,
+    serverId: input.serverId,
+    method: `admin.${input.action}`,
+    toolName: undefined,
+    decision: null,
+    policyId: null,
+    reason:
+      input.detail === undefined
+        ? `admin ${input.action}`
+        : `admin ${input.action}: ${input.detail}`,
+    outcome: input.outcome,
+    upstreamStatus: null,
+    latencyMs: input.latencyMs,
+  };
+}
+
+/**
+ * Build an audit event for one step of the approval lifecycle.
+ *
+ * These events never contain tool arguments or arguments hashes — only the
+ * public approval id, the identities involved, and the decision.
+ */
+export function buildApprovalAuditEvent(
+  eventType: Extract<AuditEventType, `approval_${string}`>,
+  record: ApprovalRecord,
+): AuditEvent {
+  const outcome: AuditOutcome =
+    eventType === "approval_created" || eventType === "approval_approved" ? "pending" : "blocked";
+
+  const reasonByType: Record<string, string> = {
+    approval_created: `Approval required: ${record.reason}`,
+    approval_approved: `Approval ${record.id} approved by ${record.approverId ?? "unknown"}`,
+    approval_denied: `Approval ${record.id} denied by ${record.approverId ?? "unknown"}`,
+    approval_expired: `Approval ${record.id} expired without a decision`,
+  };
+  const reason = reasonByType[eventType] ?? `Approval ${record.id} ${eventType}`;
+  const reasonWithNote =
+    eventType === "approval_denied" && record.decisionReason !== null
+      ? `${reason}: ${record.decisionReason}`
+      : reason;
+
+  return {
+    eventType,
+    requestId: record.requestId,
+    occurredAt: record.decidedAt ?? record.createdAt,
+    agentId: record.agentId,
+    serverId: record.serverId,
+    method: record.method,
+    toolName: record.toolName,
+    decision: "REQUIRE_APPROVAL",
+    policyId: record.policyId,
+    reason: reasonWithNote,
+    outcome,
+    upstreamStatus: null,
+    latencyMs: 0,
+    approvalId: record.id,
   };
 }
 
