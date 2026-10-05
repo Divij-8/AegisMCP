@@ -65,9 +65,32 @@ The request is forwarded to the upstream server unchanged.
 
 ### REQUIRE_APPROVAL
 
-The request is blocked and a JSON-RPC error with code `-32002` is returned. Upstream is never contacted.
+The request is blocked, a PENDING approval is persisted, and a JSON-RPC error
+with code `-32002` is returned. Upstream is never contacted while pending.
 
-**Phase 3 note:** `REQUIRE_APPROVAL` does not yet trigger a human approval workflow. It simply prevents forwarding and returns a structured error. A future phase will add the approval mechanism.
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32002,
+    "message": "Destructive action requires human approval",
+    "data": { "approvalId": "apr_...", "status": "PENDING", "expiresAt": 1700000000000 }
+  }
+}
+```
+
+An authorized administrator approves or denies the request through the control
+plane (`POST /admin/approvals/:id/approve`). The agent then retries the **exact
+same** request with the `X-Aegis-Approval-Id` header. The gateway consumes the
+approval at most once and executes; expired, denied, reused, or mismatched
+approvals never execute. Approval arguments are redacted before persistence.
+
+Without `DATABASE_URL` there is no approval store, so `REQUIRE_APPROVAL` fails
+closed: nothing can be approved and nothing executes.
+
+See the root [`README.md`](../../README.md) for the full workflow, control-plane
+API, and RBAC model.
 
 ```ts
 {
