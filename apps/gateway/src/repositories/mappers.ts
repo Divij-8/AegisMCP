@@ -7,6 +7,7 @@
  */
 
 import type { AgentIdentity, ServerIdentity } from "../security/identity.js";
+import { isAgentRole, type AgentRole } from "../security/rbac.js";
 import type { Policy, PolicyDecision, PolicyMatch } from "../policy/types.js";
 import type {
   AuditEvent,
@@ -14,11 +15,30 @@ import type {
   AuditOutcome,
   AuthFailureReason,
 } from "../audit/types.js";
+import type { RiskLevel } from "../risk/types.js";
 import type { AgentCredentialRecord } from "./types.js";
+import type { ApprovalRecord, ApprovalStatus } from "../approvals/types.js";
 
 const DECISIONS: readonly PolicyDecision[] = ["ALLOW", "DENY", "REQUIRE_APPROVAL"];
-const EVENT_TYPES: readonly AuditEventType[] = ["request", "notification", "auth"];
-const OUTCOMES: readonly AuditOutcome[] = ["blocked", "forwarded", "upstream_error", "auth_failed"];
+const EVENT_TYPES: readonly AuditEventType[] = [
+  "request",
+  "notification",
+  "auth",
+  "admin",
+  "approval_created",
+  "approval_approved",
+  "approval_denied",
+  "approval_expired",
+];
+const OUTCOMES: readonly AuditOutcome[] = [
+  "blocked",
+  "forwarded",
+  "upstream_error",
+  "auth_failed",
+  "pending",
+];
+const RISK_LEVELS: readonly RiskLevel[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
+const APPROVAL_STATUSES: readonly ApprovalStatus[] = ["PENDING", "APPROVED", "DENIED", "EXPIRED"];
 const AUTH_FAILURE_REASONS: readonly AuthFailureReason[] = [
   "missing",
   "malformed",
@@ -66,9 +86,13 @@ function toNullableEpochMillis(value: unknown, field: string): number | null {
 }
 
 export function toDomainAgent(row: Record<string, unknown>): AgentIdentity {
+  const rawRole = row["role"];
+  const role: AgentRole | undefined =
+    typeof rawRole === "string" && isAgentRole(rawRole) ? rawRole : undefined;
   return Object.freeze({
     id: asString(row["id"], "id"),
     name: asString(row["name"], "name"),
+    ...(role !== undefined ? { role } : {}),
   });
 }
 
@@ -92,6 +116,7 @@ export function toDomainPolicy(row: Record<string, unknown>): Policy {
     throw new Error(`Invalid row: policy "${id}" match must be an object`);
   }
   const raw = rawMatch as Record<string, unknown>;
+  const rawArgs = raw["arguments"];
   const match: PolicyMatch = {
     ...(raw["agent"] !== undefined && raw["agent"] !== null
       ? { agent: asString(raw["agent"], "match.agent") }
@@ -104,6 +129,9 @@ export function toDomainPolicy(row: Record<string, unknown>): Policy {
       : {}),
     ...(raw["tool"] !== undefined && raw["tool"] !== null
       ? { tool: asString(raw["tool"], "match.tool") }
+      : {}),
+    ...(rawArgs !== undefined && rawArgs !== null
+      ? { arguments: rawArgs as NonNullable<PolicyMatch["arguments"]> }
       : {}),
   };
 
@@ -175,6 +203,12 @@ export function toDomainAuditEvent(row: Record<string, unknown>): AuditEvent {
   }
 
   const keyId = asOptionalString(row["key_id"], "key_id");
+  const approvalId = asOptionalString(row["approval_id"], "approval_id");
+
+  const riskRaw = asOptionalString(row["risk_level"], "risk_level");
+  if (riskRaw !== undefined && !RISK_LEVELS.includes(riskRaw as RiskLevel)) {
+    throw new Error(`Invalid row: unknown risk_level "${riskRaw}"`);
+  }
 
   return {
     eventType,
@@ -191,6 +225,8 @@ export function toDomainAuditEvent(row: Record<string, unknown>): AuditEvent {
     upstreamStatus: asNullableNumber(row["upstream_status"], "upstream_status"),
     latencyMs: latency,
     ...(keyId !== undefined ? { keyId } : {}),
+    ...(approvalId !== undefined ? { approvalId } : {}),
+    ...(riskRaw !== undefined ? { riskLevel: riskRaw as RiskLevel } : {}),
     ...(authFailureReasonRaw !== undefined
       ? { authFailureReason: authFailureReasonRaw as AuthFailureReason }
       : {}),
@@ -198,4 +234,59 @@ export function toDomainAuditEvent(row: Record<string, unknown>): AuditEvent {
       ? { toolArgumentsRedaction: { hash, algorithm: hashAlgo } }
       : {}),
   };
+}
+
+/**
+ * Map a storage row to an ApprovalRecord. Rows are trusted (written only by
+ * this gateway), but shape violations still fail loudly rather than silently
+ * producing a malformed record.
+ */
+export function toDomainApproval(row: Record<string, unknown>): ApprovalRecord {
+  const status = asString(row["status"], "status") as ApprovalStatus;
+  if (!APPROVAL_STATUSES.includes(status)) {
+    throw new Error(`Invalid row: unknown approval status "${status}"`);
+  }
+
+  const rawArgs = row["arguments"];
+  let args: Record<string, unknown> = {};
+  if (typeof rawArgs === "string") {
+    try {
+      const parsed: unknown = JSON.parse(rawArgs);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        args = parsed as Record<string, unknown>;
+      }
+    } catch {
+      throw new Error("Invalid row: approval arguments must be valid JSON");
+    }
+  } else if (typeof rawArgs === "object" && rawArgs !== null && !Array.isArray(rawArgs)) {
+    args = rawArgs as Record<string, unknown>;
+  } else {
+    throw new Error("Invalid row: approval arguments must be an object");
+  }
+
+  const toolName = asOptionalString(row["tool_name"], "tool_name");
+  const decisionReason = asOptionalString(row["decision_reason"], "decision_reason");
+  const approverId = asOptionalString(row["approver_id"], "approver_id");
+
+  return Object.freeze({
+    id: asString(row["id"], "id"),
+    requestId: (row["request_id"] as string | null) ?? null,
+    agentId: asString(row["agent_id"], "agent_id"),
+    serverId: asString(row["server_id"], "server_id"),
+    method: asString(row["method"], "method"),
+    toolName,
+    arguments: Object.freeze(args),
+    argsHash: asString(row["args_hash"], "args_hash"),
+    argsHashAlgo: asString(row["args_hash_algo"], "args_hash_algo"),
+    policyId: asOptionalString(row["policy_id"], "policy_id") ?? null,
+    decision: "REQUIRE_APPROVAL" as const,
+    reason: asString(row["reason"], "reason"),
+    createdAt: toEpochMillis(row["created_at"], "created_at"),
+    expiresAt: toEpochMillis(row["expires_at"], "expires_at"),
+    status,
+    approverId: approverId ?? null,
+    decidedAt: toNullableEpochMillis(row["decided_at"], "decided_at"),
+    decisionReason: decisionReason ?? null,
+    consumedAt: toNullableEpochMillis(row["consumed_at"], "consumed_at"),
+  });
 }
