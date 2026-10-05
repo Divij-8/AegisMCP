@@ -41,6 +41,8 @@ export interface Persistence {
   readonly repositories: Repositories;
   readonly policyStore: PolicyStore;
   readonly auditSink: AuditSink;
+  /** Trusted identity this gateway is registered under (audit FK anchor). */
+  readonly identity: TrustedIdentityConfig;
   dispose(): Promise<void>;
 }
 
@@ -87,6 +89,7 @@ export async function initPersistence(
     repositories,
     policyStore,
     auditSink,
+    identity,
     dispose: async () => {
       await auditSink.close();
       await disposeDbPool(pool);
