@@ -12,6 +12,10 @@ import type { AuditSink } from "./audit/types.js";
 import { DbAgentAuthenticator, StaticIdentityAuthenticator } from "./security/authenticator.js";
 import type { AgentAuthenticator } from "./security/authenticator.js";
 import { ScryptSecretHasher } from "./security/hash.js";
+import { ApprovalService } from "./approvals/service.js";
+import { RiskEngine } from "./risk/engine.js";
+import { adminRoutes } from "./routes/admin.js";
+import { Metrics } from "./observability/metrics.js";
 
 export interface AppOptions {
   upstreamUrl?: string;
@@ -32,6 +36,13 @@ export interface AppOptions {
     flushIntervalMs?: number;
     maxAttempts?: number;
   };
+  /** Risk engine override (tests / specialized deployments). */
+  risk?: {
+    enabled?: boolean;
+    engineOptions?: ConstructorParameters<typeof RiskEngine>[0];
+  };
+  /** Maximum accepted MCP request body size in bytes (defaults to config). */
+  maxRequestBodyBytes?: number;
   /**
    * Authentication enforcement override. `undefined` inherits AUTH_REQUIRED.
    * `true` requires DATABASE_URL (startup fails otherwise) and enforces
@@ -50,7 +61,11 @@ declare module "fastify" {
 }
 
 export function buildApp(options?: AppOptions) {
-  const app = Fastify({ logger: false });
+  const app = Fastify({
+    logger: false,
+    // Reject oversized bodies at the framework edge, before our content parser.
+    bodyLimit: options?.maxRequestBodyBytes ?? config.maxRequestBodyBytes,
+  });
 
   const identity = options?.identity ?? config.identity;
   const staticPolicies = options?.policies ?? config.policies;
@@ -79,12 +94,31 @@ export function buildApp(options?: AppOptions) {
   let policyStore = new PolicyStore(null, staticPolicies);
   let auditSink: AuditSink = new NullAuditSink();
   const staticAuthenticator = new StaticIdentityAuthenticator(identity.agent);
+  // Risk engine is optional; when absent the policy decision passes through.
+  const riskEngine =
+    (options?.risk?.enabled ?? config.riskEnabled)
+      ? new RiskEngine(options?.risk?.engineOptions ?? {})
+      : undefined;
   // Explicitly widened so the boot plugin can swap in the enforcing authenticator.
+  const startedAt = Date.now();
+  const metrics = new Metrics();
   const runtime: {
     policyStore: PolicyStore;
     auditSink: AuditSink;
     authenticator: AgentAuthenticator;
-  } = { policyStore, auditSink, authenticator: staticAuthenticator };
+    approvalService: ApprovalService;
+    riskEngine: RiskEngine | undefined;
+    metrics: Metrics;
+  } = {
+    policyStore,
+    auditSink,
+    authenticator: staticAuthenticator,
+    // Without persistence there is no approval repository: the service is
+    // unavailable and REQUIRE_APPROVAL fails closed (never executes).
+    approvalService: new ApprovalService(null, auditSink),
+    riskEngine,
+    metrics,
+  };
 
   app.decorate("persistence", null);
 
@@ -106,6 +140,10 @@ export function buildApp(options?: AppOptions) {
           new ScryptSecretHasher({ pepper: config.credentialPepper }),
         )
       : staticAuthenticator;
+    runtime.approvalService = new ApprovalService(persistence.repositories.approvals, auditSink, {
+      defaultTtlMs: config.approvalTtlMs,
+      maxTtlMs: config.approvalMaxTtlMs,
+    });
     app.persistence = persistence;
   });
 
@@ -116,12 +154,24 @@ export function buildApp(options?: AppOptions) {
     }
   });
 
-  app.register(healthRoutes);
+  app.register(healthRoutes, {
+    metrics,
+    auditSink: () => runtime.auditSink,
+    policyStore: () => runtime.policyStore,
+    getPersistence: () => app.persistence,
+    startedAt,
+  });
   app.register(mcpRoutes, {
     upstreamUrl: options?.upstreamUrl ?? config.upstreamUrl,
     upstreamTimeoutMs: options?.upstreamTimeoutMs ?? config.upstreamTimeoutMs,
+    maxRequestBodyBytes: options?.maxRequestBodyBytes ?? config.maxRequestBodyBytes,
+    maxToolArgumentBytes: config.maxToolArgumentBytes,
     identity,
     runtime,
+  });
+  app.register(adminRoutes, {
+    runtime,
+    getPersistence: () => app.persistence,
   });
 
   return app;
