@@ -32,6 +32,27 @@ export interface PolicyMatch {
   readonly method?: string;
   /** Exact match on toolName (e.g. "echo", "database.delete") */
   readonly tool?: string;
+  /**
+   * Optional argument constraints (ANDed with every other field).
+   *
+   * A constrained key must be present in the request's tool arguments and
+   * satisfy its constraint, otherwise the policy does not match. This narrows
+   * when an ALLOW/REQUIRE_APPROVAL applies; it can never widen a DENY, because
+   * decision severity (DENY > REQUIRE_APPROVAL > ALLOW) is resolved AFTER
+   * matching and is unaffected by argument constraints.
+   */
+  readonly arguments?: Readonly<Record<string, ArgumentConstraint>>;
+}
+
+/**
+ * Constraint on a single tool argument. Exactly one of equals/oneOf should be
+ * set; a constraint with neither is treated as never-matching (fail closed).
+ */
+export interface ArgumentConstraint {
+  /** The argument must deep-equal this JSON value. */
+  readonly equals?: unknown;
+  /** The argument must deep-equal one of these JSON values. */
+  readonly oneOf?: readonly unknown[];
 }
 
 /**
@@ -52,6 +73,8 @@ export interface Policy {
   readonly reason: string;
   /** Optional numeric priority. Higher values win within the same decision severity. Default: 0. */
   readonly priority?: number;
+  /** When false the policy is ignored by evaluation. Default: true. */
+  readonly enabled?: boolean;
 }
 
 /**
