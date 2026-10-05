@@ -1,0 +1,14 @@
+{
+  "name": "@aegis/security-tests",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@aegis/gateway": "workspace:*",
+    "@aegis/mock-mcp-server": "workspace:*",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
+  }
+}
