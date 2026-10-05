@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
+import { INVALID_REQUEST, INVALID_PARAMS } from "@modelcontextprotocol/server";
 import { proxyMcpRequest } from "../proxy/mcp-proxy.js";
 import { parseMcpRequest, serializeJsonRpcError } from "../mcp/parse.js";
 import type { RequestId, SecurityContext } from "../mcp/types.js";
@@ -12,6 +13,10 @@ import {
   buildNotificationAuditEvent,
   buildAuthFailureAuditEvent,
 } from "../audit/builder.js";
+import type { ApprovalService } from "../approvals/service.js";
+import type { RiskEngine } from "../risk/engine.js";
+import type { RiskLevel } from "../risk/types.js";
+import { METRIC, type Metrics } from "../observability/metrics.js";
 
 export interface McpRuntime {
   /** Live policy store — swapped by app bootstrap when persistence is on. */
@@ -23,11 +28,24 @@ export interface McpRuntime {
    * can never silently disable enforcement.
    */
   readonly authenticator: AgentAuthenticator;
+  /**
+   * Approval workflow. When persistence is disabled the service is unavailable
+   * and REQUIRE_APPROVAL fails closed (never executes, no approval is issued).
+   */
+  readonly approvalService: ApprovalService;
+  /** Risk evaluation applied after policy. Optional; defaults to disabled. */
+  readonly riskEngine?: RiskEngine;
+  /** In-process counters exposed by the metrics endpoint. */
+  readonly metrics: Metrics;
 }
 
 export interface McpRoutesOptions {
   upstreamUrl: string;
   upstreamTimeoutMs: number;
+  /** Maximum accepted request body size, in bytes. */
+  maxRequestBodyBytes: number;
+  /** Maximum accepted serialized tool-arguments size, in bytes. */
+  maxToolArgumentBytes: number;
   identity: TrustedIdentityConfig;
   /** Mutable holder so bootstrap swaps are visible to every request. */
   runtime: McpRuntime;
@@ -37,6 +55,31 @@ const DENY_ERROR_CODE = -32003;
 const APPROVAL_ERROR_CODE = -32002;
 /** Authentication failures are produced by the HTTP security gate, not by policy. */
 const AUTH_ERROR_CODE = -32004;
+/** Agents present a previously granted approval id on this header. */
+const APPROVAL_HEADER = "x-aegis-approval-id";
+
+function firstHeader(value: string | string[] | undefined): string | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const trimmed = raw?.trim();
+  return trimmed !== undefined && trimmed.length > 0 ? trimmed : undefined;
+}
+
+/** Client-facing message for an approval id that cannot authorize execution. */
+function approvalRefusalMessage(kind: string): string {
+  switch (kind) {
+    case "not_found":
+      return "Approval not found";
+    case "expired":
+      return "Approval expired";
+    case "already_consumed":
+      return "Approval already used";
+    case "binding_mismatch":
+      return "Approval does not match this request";
+    case "not_approved":
+    default:
+      return "Approval is not approved";
+  }
+}
 
 function toBuffer(raw: unknown): Buffer {
   if (Buffer.isBuffer(raw)) return raw;
@@ -103,7 +146,19 @@ export async function mcpRoutes(
   });
 
   fastify.all("/mcp", async (request, reply) => {
+    options.runtime.metrics.increment(METRIC.mcpRequests);
     const body = toBuffer(request.body);
+
+    // Bound the work before parsing. Fastify also enforces bodyLimit, but this
+    // guarantees the behavior for embedded/injected routes too.
+    if (body.length > options.maxRequestBodyBytes) {
+      reply.code(413);
+      reply.send(
+        serializeJsonRpcError({ code: INVALID_REQUEST, message: "Request too large" }, null),
+      );
+      return reply;
+    }
+
     const parseResult = parseMcpRequest(body, options.identity);
 
     // Normalization failures return before authentication by design: the body
@@ -111,6 +166,19 @@ export async function mcpRoutes(
     if (parseResult.kind === "error") {
       reply.code(200);
       reply.send(serializeJsonRpcError(parseResult.error, null));
+      return reply;
+    }
+
+    // Tool arguments are attacker-controlled; bound them before policy/risk/proxy.
+    if (
+      parseResult.kind === "request" &&
+      parseResult.context.toolArguments !== undefined &&
+      JSON.stringify(parseResult.context.toolArguments).length > options.maxToolArgumentBytes
+    ) {
+      reply.code(200);
+      reply.send(
+        serializeJsonRpcError({ code: INVALID_PARAMS, message: "Tool arguments too large" }, null),
+      );
       return reply;
     }
 
@@ -130,6 +198,7 @@ export async function mcpRoutes(
     );
 
     if (!auth.ok) {
+      options.runtime.metrics.increment(METRIC.mcpAuthFailures);
       options.runtime.auditSink.record(
         buildAuthFailureAuditEvent({
           requestId: correlation.requestId,
@@ -176,10 +245,21 @@ export async function mcpRoutes(
     // Authenticated identity replaces the static placeholder in the context.
     const context: SecurityContext = { ...parseResult.context, agent };
     const engine = options.runtime.policyStore.buildEngine();
-    const verdict = engine.evaluate(context);
+    const policyVerdict = engine.evaluate(context);
+    // Risk runs AFTER policy and can only strengthen the decision — it can never
+    // turn a DENY into an ALLOW or REQUIRE_APPROVAL.
+    const riskDecision = options.runtime.riskEngine
+      ? options.runtime.riskEngine.apply(context, policyVerdict)
+      : { evaluation: policyVerdict, assessment: undefined };
+    const verdict = riskDecision.evaluation;
+    const riskLevel: RiskLevel | undefined = riskDecision.assessment?.level;
+    if (verdict.decision === "ALLOW") options.runtime.metrics.increment(METRIC.mcpPolicyAllow);
+    else if (verdict.decision === "DENY") options.runtime.metrics.increment(METRIC.mcpPolicyDeny);
+    else options.runtime.metrics.increment(METRIC.mcpPolicyRequireApproval);
 
-    if (verdict.decision === "DENY" || verdict.decision === "REQUIRE_APPROVAL") {
-      const code = verdict.decision === "DENY" ? DENY_ERROR_CODE : APPROVAL_ERROR_CODE;
+    let approvalId: string | undefined;
+
+    if (verdict.decision === "DENY") {
       options.runtime.auditSink.record(
         buildRequestAuditEvent({
           context,
@@ -187,11 +267,97 @@ export async function mcpRoutes(
           outcome: "blocked",
           upstreamStatus: null,
           latencyMs: Date.now() - startedAt,
+          ...(riskLevel !== undefined ? { riskLevel } : {}),
         }),
       );
       reply.code(200);
-      reply.send(serializeJsonRpcError({ code, message: verdict.reason }, context.requestId));
+      reply.send(
+        serializeJsonRpcError(
+          { code: DENY_ERROR_CODE, message: verdict.reason },
+          context.requestId,
+        ),
+      );
       return reply;
+    }
+
+    if (verdict.decision === "REQUIRE_APPROVAL") {
+      const presented = firstHeader(request.headers[APPROVAL_HEADER]);
+
+      if (presented !== undefined) {
+        // An approval authorizes execution only when it is APPROVED, unexpired,
+        // unconsumed, and bound to THIS exact request. Otherwise fail closed.
+        const consumed = await options.runtime.approvalService.consume(
+          presented,
+          context,
+          agent.id,
+        );
+        if (consumed.kind !== "ok") {
+          options.runtime.auditSink.record(
+            buildRequestAuditEvent({
+              context,
+              evaluation: verdict,
+              outcome: "blocked",
+              upstreamStatus: null,
+              latencyMs: Date.now() - startedAt,
+              approvalId: presented,
+              ...(riskLevel !== undefined ? { riskLevel } : {}),
+            }),
+          );
+          reply.code(200);
+          reply.send(
+            serializeJsonRpcError(
+              { code: APPROVAL_ERROR_CODE, message: approvalRefusalMessage(consumed.kind) },
+              context.requestId,
+            ),
+          );
+          return reply;
+        }
+        approvalId = consumed.approval.id;
+        options.runtime.metrics.increment(METRIC.approvalsConsumed);
+      } else {
+        // No approval presented: create/reuse a PENDING approval. Nothing executes.
+        const created = await options.runtime.approvalService.createForContext(context, verdict);
+        const createdId = created.kind === "unavailable" ? undefined : created.approval.id;
+        options.runtime.auditSink.record(
+          buildRequestAuditEvent({
+            context,
+            evaluation: verdict,
+            outcome: "blocked",
+            upstreamStatus: null,
+            latencyMs: Date.now() - startedAt,
+            ...(createdId !== undefined ? { approvalId: createdId } : {}),
+            ...(riskLevel !== undefined ? { riskLevel } : {}),
+          }),
+        );
+        reply.code(200);
+        if (created.kind === "unavailable") {
+          // Fail closed: no approval can be issued, so nothing can authorize
+          // execution. The client still sees the policy's reason (unchanged
+          // contract); the absence of an approval id signals unavailability.
+          reply.send(
+            serializeJsonRpcError(
+              { code: APPROVAL_ERROR_CODE, message: verdict.reason },
+              context.requestId,
+            ),
+          );
+        } else {
+          reply.send(
+            serializeJsonRpcError(
+              {
+                code: APPROVAL_ERROR_CODE,
+                message: verdict.reason,
+                data: {
+                  approvalId: created.approval.id,
+                  status: created.approval.status,
+                  expiresAt: created.approval.expiresAt,
+                },
+              },
+              context.requestId,
+            ),
+          );
+        }
+        return reply;
+      }
     }
 
     let outcome: AuditOutcome = "upstream_error";
@@ -203,6 +369,8 @@ export async function mcpRoutes(
       if (status === 502 || status === 504) outcome = "upstream_error";
       else if (status >= 500) outcome = "upstream_error";
       else outcome = "forwarded";
+      if (outcome === "upstream_error") options.runtime.metrics.increment(METRIC.mcpUpstreamErrors);
+      if (status === 504) options.runtime.metrics.increment(METRIC.mcpUpstreamTimeouts);
       options.runtime.auditSink.record(
         buildRequestAuditEvent({
           context,
@@ -210,6 +378,8 @@ export async function mcpRoutes(
           outcome,
           upstreamStatus,
           latencyMs: Date.now() - startedAt,
+          ...(approvalId !== undefined ? { approvalId } : {}),
+          ...(riskLevel !== undefined ? { riskLevel } : {}),
         }),
       );
     });
