@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { PolicyStore } from "./store.js";
-import type { PolicyRepository } from "../repositories/types.js";
+import type { Page, PolicyRepository } from "../repositories/types.js";
 import type { Policy } from "./types.js";
 import type { SecurityContext } from "../mcp/types.js";
 
@@ -45,6 +45,18 @@ class FakePolicyRepository implements PolicyRepository {
   async setEnabled(): Promise<void> {
     throw new Error("not implemented");
   }
+
+  async listAll(): Promise<Page<Policy>> {
+    return { items: [...this.policies], total: this.policies.length, limit: 0, offset: 0 };
+  }
+
+  async findById(): Promise<Policy | null> {
+    throw new Error("not implemented");
+  }
+
+  async remove(): Promise<boolean> {
+    throw new Error("not implemented");
+  }
 }
 
 class ThrowingPolicyRepository implements PolicyRepository {
@@ -58,6 +70,18 @@ class ThrowingPolicyRepository implements PolicyRepository {
 
   async setEnabled(): Promise<void> {
     throw new Error("not implemented");
+  }
+
+  async listAll(): Promise<Page<Policy>> {
+    throw new Error("db down");
+  }
+
+  async findById(): Promise<Policy | null> {
+    throw new Error("db down");
+  }
+
+  async remove(): Promise<boolean> {
+    throw new Error("db down");
   }
 }
 
