@@ -4,16 +4,24 @@ import http from "node:http";
 import { mcpRoutes } from "./mcp.js";
 import { PolicyStore } from "../policy/store.js";
 import { BufferedAuditSink } from "../audit/sink.js";
-import type { AuditEventRepository } from "../repositories/types.js";
+import type { AuditEventRepository, Page } from "../repositories/types.js";
 import type { AuditEvent } from "../audit/types.js";
 import type { Policy } from "../policy/types.js";
 import type { TrustedIdentityConfig } from "../security/identity.js";
 import { StaticIdentityAuthenticator } from "../security/authenticator.js";
+import { ApprovalService } from "../approvals/service.js";
+import { Metrics } from "../observability/metrics.js";
 
 class RecordingAuditRepository implements AuditEventRepository {
   readonly events: AuditEvent[] = [];
   async insertBatch(events: readonly AuditEvent[]): Promise<void> {
     this.events.push(...events);
+  }
+  async list(): Promise<Page<AuditEvent & { id: string }>> {
+    return { items: [], total: 0, limit: 0, offset: 0 };
+  }
+  async findById(): Promise<(AuditEvent & { id: string }) | null> {
+    return null;
   }
 }
 
@@ -74,10 +82,15 @@ describe("mcp routes — policy store + audit integration (no DB)", () => {
       policyStore,
       auditSink,
       authenticator: new StaticIdentityAuthenticator(identity.agent),
+      approvalService: new ApprovalService(null, auditSink),
+      riskEngine: undefined,
+      metrics: new Metrics(),
     };
     void app.register(mcpRoutes, {
       upstreamUrl: `http://127.0.0.1:${upstreamPort}/mcp`,
       upstreamTimeoutMs: 5_000,
+      maxRequestBodyBytes: 1_048_576,
+      maxToolArgumentBytes: 262_144,
       identity,
       runtime,
     });
