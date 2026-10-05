@@ -1,0 +1,57 @@
+# Local development stack: PostgreSQL + mock upstream MCP server + Aegis gateway.
+#
+#   cp .env.example .env   # edit values / set a strong CREDENTIAL_PEPPER
+#   docker compose up --build
+#
+# The gateway migrates on startup. Authentication is ENFORCED (AUTH_REQUIRED=true),
+# so create a credential before making requests:
+#
+#   docker compose exec gateway sh -lc "cd apps/gateway && node dist/credentials/cli.js create --agent demo --role OPERATOR"
+#
+# Then send requests to http://localhost:3000/mcp with the printed API key.
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: aegis
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aegis}
+      POSTGRES_DB: aegis
+    ports:
+      - "5432:5432"
+    volumes:
+      - aegis_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aegis -d aegis"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mock-mcp:
+    build: .
+    command: ["node", "apps/mock-mcp-server/dist/index.js"]
+    environment:
+      MOCK_SERVER_HOST: 0.0.0.0
+    expose:
+      - "3001"
+
+  gateway:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mock-mcp:
+        condition: service_started
+    environment:
+      PORT: "3000"
+      HOST: 0.0.0.0
+      DATABASE_URL: postgres://aegis:${POSTGRES_PASSWORD:-aegis}@postgres:5432/aegis
+      AUTH_REQUIRED: "true"
+      UPSTREAM_URL: http://mock-mcp:3001/mcp
+      CREDENTIAL_PEPPER: ${CREDENTIAL_PEPPER:?set CREDENTIAL_PEPPER in .env}
+      RISK_ENGINE: "true"
+    ports:
+      - "3000:3000"
+
+volumes:
+  aegis_pgdata:
