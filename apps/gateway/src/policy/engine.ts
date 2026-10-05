@@ -37,6 +37,7 @@ export class PolicyEngine {
     const matching: Policy[] = [];
 
     for (const policy of this.policies) {
+      if (policy.enabled === false) continue;
       if (matchesPolicy(context, policy.match)) {
         matching.push(policy);
       }
