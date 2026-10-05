@@ -3,6 +3,8 @@ import Fastify from "fastify";
 import http from "node:http";
 import { mcpRoutes } from "./mcp.js";
 import { PolicyStore } from "../policy/store.js";
+import { ApprovalService } from "../approvals/service.js";
+import { Metrics } from "../observability/metrics.js";
 import type { AgentAuthenticator, AuthResult } from "../security/authenticator.js";
 import type { AuditEvent, AuditSink, AuditSinkStats } from "../audit/types.js";
 import type { Policy } from "../policy/types.js";
@@ -79,8 +81,17 @@ async function buildGateway(options: {
   void app.register(mcpRoutes, {
     upstreamUrl: `http://127.0.0.1:${upstreamPort}/mcp`,
     upstreamTimeoutMs: 5_000,
+    maxRequestBodyBytes: 1_048_576,
+    maxToolArgumentBytes: 262_144,
     identity,
-    runtime: { policyStore, auditSink: sink, authenticator: options.authenticator },
+    runtime: {
+      policyStore,
+      auditSink: sink,
+      authenticator: options.authenticator,
+      approvalService: new ApprovalService(null, sink),
+      riskEngine: undefined,
+      metrics: new Metrics(),
+    },
   });
   await app.listen({ port: 0, host: "127.0.0.1" });
   const addr = app.server.address();
