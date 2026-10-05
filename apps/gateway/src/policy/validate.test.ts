@@ -90,4 +90,44 @@ describe("validatePolicies", () => {
       /"bad-policy"/,
     );
   });
+
+  it("accepts an explicit enabled boolean", () => {
+    expect(() => validatePolicies([validPolicy({ enabled: false })])).not.toThrow();
+  });
+
+  it("rejects a non-boolean enabled value", () => {
+    expect(() => validatePolicies([validPolicy({ enabled: "yes" as unknown as boolean })])).toThrow(
+      /enabled must be a boolean/,
+    );
+  });
+
+  it("accepts valid argument constraints", () => {
+    expect(() =>
+      validatePolicies([
+        validPolicy({ match: { arguments: { mode: { oneOf: ["append", "read"] } } } }),
+      ]),
+    ).not.toThrow();
+  });
+
+  it("rejects an argument constraint with both equals and oneOf", () => {
+    expect(() =>
+      validatePolicies([
+        validPolicy({ match: { arguments: { mode: { equals: "a", oneOf: ["a"] } } } }),
+      ]),
+    ).toThrow(/exactly one of equals\/oneOf/);
+  });
+
+  it("rejects an argument constraint with neither equals nor oneOf", () => {
+    expect(() => validatePolicies([validPolicy({ match: { arguments: { mode: {} } } })])).toThrow(
+      /exactly one of equals\/oneOf/,
+    );
+  });
+
+  it("rejects a non-array oneOf", () => {
+    expect(() =>
+      validatePolicies([
+        validPolicy({ match: { arguments: { mode: { oneOf: "a" as unknown as string[] } } } }),
+      ]),
+    ).toThrow(/oneOf must be an array/);
+  });
 });
