@@ -15,6 +15,7 @@ import { ScryptSecretHasher } from "./security/hash.js";
 import { ApprovalService } from "./approvals/service.js";
 import { RiskEngine } from "./risk/engine.js";
 import { adminRoutes } from "./routes/admin.js";
+import { dashboardRoutes } from "./routes/dashboard.js";
 import { Metrics } from "./observability/metrics.js";
 
 export interface AppOptions {
@@ -173,6 +174,9 @@ export function buildApp(options?: AppOptions) {
     runtime,
     getPersistence: () => app.persistence,
   });
+  // Static, secretless browser shell. All data it displays is fetched from the
+  // authenticated /admin API by the browser; this route adds no data path.
+  app.register(dashboardRoutes);
 
   return app;
 }
