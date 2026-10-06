@@ -37,6 +37,9 @@ const USAGE = [
   "  credential revoke --key-id <id>",
   "  credential list   --agent <id>",
   "",
+  "Roles are not assigned here: a new agent defaults to AGENT. Assign a role with",
+  "  operations agent create --id <id> --role ADMIN|OPERATOR|AUDITOR|AGENT",
+  "",
   "Requires DATABASE_URL. The API key is printed once on creation and is never stored.",
 ].join("\n");
 
@@ -45,7 +48,23 @@ interface ParsedFlags {
   readonly error: string | undefined;
 }
 
-function parseFlags(args: readonly string[]): ParsedFlags {
+function supportedFlags(allowed: readonly string[]): string {
+  return allowed.length === 0
+    ? "This command accepts no flags."
+    : `Supported flags: ${allowed.map((flag) => `--${flag}`).join(", ")}`;
+}
+
+/**
+ * Parse `--flag value` pairs, rejecting anything outside `allowed`.
+ *
+ * Unknown flags fail loudly on purpose. Silently dropping one let
+ * `credential:create --agent my-agent --role OPERATOR` report success while
+ * registering an AGENT-role principal, so the caller's next control-plane
+ * request failed with 403 and nothing explained why. Roles are owned by
+ * `operations agent create --role`; the error message points at the flags
+ * this command really takes.
+ */
+function parseFlags(args: readonly string[], allowed: readonly string[]): ParsedFlags {
   const flags = new Map<string, string>();
   for (let index = 0; index < args.length; index++) {
     const token = args[index]!;
@@ -55,6 +74,9 @@ function parseFlags(args: readonly string[]): ParsedFlags {
       return { flags, error: `Unexpected argument "${token}"` };
     }
     const name = token.slice(2);
+    if (!allowed.includes(name)) {
+      return { flags, error: `Unknown flag "--${name}". ${supportedFlags(allowed)}` };
+    }
     const value = args[index + 1];
     if (value === undefined || value.startsWith("--")) {
       return { flags, error: `Missing value for --${name}` };
@@ -82,7 +104,8 @@ async function runCreate(
   io: CliIo,
   deps: CredentialCliDeps,
 ): Promise<number> {
-  const { flags, error } = parseFlags(args);
+  const allowed = ["agent", "agent-name", "label", "expires-in-days"] as const;
+  const { flags, error } = parseFlags(args, allowed);
   if (error !== undefined) {
     io.err(`create: ${error}`);
     return 1;
@@ -129,7 +152,7 @@ async function runRevoke(
   io: CliIo,
   deps: CredentialCliDeps,
 ): Promise<number> {
-  const { flags, error } = parseFlags(args);
+  const { flags, error } = parseFlags(args, ["key-id"]);
   if (error !== undefined) {
     io.err(`revoke: ${error}`);
     return 1;
@@ -155,7 +178,7 @@ async function runList(
   io: CliIo,
   deps: CredentialCliDeps,
 ): Promise<number> {
-  const { flags, error } = parseFlags(args);
+  const { flags, error } = parseFlags(args, ["agent"]);
   if (error !== undefined) {
     io.err(`list: ${error}`);
     return 1;
