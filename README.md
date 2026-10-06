@@ -155,11 +155,21 @@ Present the key as `Authorization: Bearer <key>` or `X-API-Key: <key>`.
 Set `AUTH_REQUIRED=true` together with `DATABASE_URL` to enforce authentication
 (the gateway refuses to start if `AUTH_REQUIRED=true` without a database).
 
-Create credentials with the CLI:
+Create credentials with the CLI. `credential:create` manages the **credential
+only** — it never sets a role. A newly registered agent defaults to `AGENT`
+(least privilege), so assign the role separately with the operations CLI:
 
 ```bash
-pnpm --filter @aegis/gateway credential:create -- --agent my-agent --role OPERATOR
+# 1. register the agent with the role it needs (ADMIN | OPERATOR | AUDITOR | AGENT)
+pnpm --filter @aegis/gateway operations -- agent create --id my-agent --role OPERATOR
+
+# 2. issue a credential for it (the API key is printed once)
+pnpm --filter @aegis/gateway credential:create -- --agent my-agent
 ```
+
+Role assignment is deliberately owned by one command. An unrecognised flag now
+fails loudly instead of being ignored, so `credential:create --role OPERATOR`
+reports an error rather than quietly registering an `AGENT`-role principal.
 
 ## Policy engine
 
@@ -279,16 +289,57 @@ List endpoints accept `limit` (1–200, default 50) and `offset`, and return
 | `AUDITOR` | read-only |
 | `AGENT` | none (data plane only) |
 
+## Dashboard
+
+A read-only browser view of the control plane is served directly by the
+gateway — no separate frontend, no build step, no extra dependencies:
+
+```
+http://127.0.0.1:3000/dashboard
+```
+
+Enter an agent API key (the same `amcp_…` credential the `/admin` API takes)
+and the page renders:
+
+- **Gateway status** — liveness, readiness, metrics counters, audit queue
+  health. This panel works without a key, because those endpoints are
+  unauthenticated.
+- **Your principal** — the resolved agent, role, and permissions.
+- **Policies**, **Approvals** (filterable by status), **Audit events**, and
+  **Agents**.
+
+Security posture:
+
+- The served shell is **static and secretless**. Every value shown is fetched
+  by the browser from the existing authenticated `/admin` API, so the
+  dashboard adds no data path and cannot bypass RBAC: an `AGENT` credential
+  sees `Insufficient permissions` on every control-plane panel, and an
+  unauthenticated visitor sees an empty shell.
+- The key is supplied by the operator and kept in `sessionStorage` (cleared
+  when the tab closes). It is never sent to the server by the dashboard route,
+  never logged, and never embedded in the HTML.
+- Responses carry a strict CSP (`default-src 'none'`, no `unsafe-inline`,
+  `frame-ancestors 'none'`) plus `nosniff`, `no-referrer`, and `no-store`.
+- Rendered values are written with `textContent` only, so a hostile policy
+  reason, tool argument, or audit detail is displayed as literal text and
+  never as markup.
+- Like `/health` and `/metrics`, the shell itself is served without
+  authentication because it contains no data. If your deployment requires
+  that, block `/dashboard` at the network edge rather than exposing `:3000`
+  publicly.
+- Read-only by design: approve/deny actions stay on the operations CLI and the
+  audited `POST /admin/approvals/:id/{approve,deny}` endpoints.
+
 ## CLI
 
 ```bash
-# Credentials
-pnpm --filter @aegis/gateway credential:create -- --agent bot --role AGENT
+# Credentials (credential lifecycle only — roles belong to the agent)
+pnpm --filter @aegis/gateway credential:create -- --agent bot
 pnpm --filter @aegis/gateway credential:list   -- --agent bot
 pnpm --filter @aegis/gateway credential:revoke -- --key-id <keyId>
 
 # Operations (agents, policies, approvals, audit)
-pnpm --filter @aegis/gateway operations -- agent create --id ops --role OPERATOR
+pnpm --filter @aegis/gateway operations -- agent create --id ops --role OPERATOR  # role assignment
 pnpm --filter @aegis/gateway operations -- policy list
 pnpm --filter @aegis/gateway operations -- approval list --status PENDING
 pnpm --filter @aegis/gateway operations -- approval approve --id apr_... --reason "reviewed"
