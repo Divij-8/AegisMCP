@@ -129,6 +129,7 @@ describe("mcp auth gate", () => {
     const response = await post(url, toolCall("echo"));
     expect(response.status).toBe(401);
     expect(response.headers.get("www-authenticate")).toBe("Bearer");
+    expect(response.headers.get("content-type")).toContain("application/json");
     const body = (await response.json()) as { error?: { code: number; message: string } };
     expect(body.error?.code).toBe(-32004);
     expect(body.error?.message).toBe("Missing credentials");
