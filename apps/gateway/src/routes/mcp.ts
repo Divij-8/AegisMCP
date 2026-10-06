@@ -147,6 +147,16 @@ export async function mcpRoutes(
 
   fastify.all("/mcp", async (request, reply) => {
     options.runtime.metrics.increment(METRIC.mcpRequests);
+
+    // JSON-RPC responses are JSON. Fastify serializes a string payload as
+    // text/plain by default, which a standards-compliant MCP client (including
+    // the official SDK) refuses to parse — turning a policy refusal (-32003), an
+    // approval prompt (-32002), or an auth failure (-32004) into an opaque
+    // client-side transport error instead of an actionable JSON-RPC error.
+    // The proxied path below hijacks the reply and writes the upstream's own
+    // headers, so this only affects gateway-generated responses.
+    reply.type("application/json");
+
     const body = toBuffer(request.body);
 
     // Bound the work before parsing. Fastify also enforces bodyLimit, but this
