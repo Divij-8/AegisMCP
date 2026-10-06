@@ -107,6 +107,66 @@ describe("runCredentialCli create", () => {
     expect(out.join("\n")).not.toContain("amcp_");
     expect(err.join("\n")).toContain("expires-in-days");
   });
+
+  it("rejects --role instead of silently creating an AGENT-role principal", async () => {
+    const repositories = buildInMemoryRepositories();
+    const { io, out, err } = capture();
+
+    // This is the command the README used to document. It must fail rather
+    // than report success while registering an agent that cannot reach the
+    // control plane.
+    const code = await runCredentialCli(
+      ["create", "--agent", "my-agent", "--role", "OPERATOR"],
+      io,
+      { service: makeService(repositories) },
+    );
+
+    expect(code).toBe(1);
+    expect(out.join("\n")).not.toContain("amcp_");
+    const stderr = err.join("\n");
+    expect(stderr).toContain('Unknown flag "--role"');
+    // The message must point at the flags this command actually takes.
+    expect(stderr).toContain("--agent");
+    expect(stderr).toContain("--label");
+
+    // Nothing was created: no agent, no credential.
+    expect(await repositories.agents.findById("my-agent")).toBeNull();
+    expect(await repositories.credentials.listByAgent("my-agent")).toHaveLength(0);
+  });
+
+  it("rejects a misspelled flag without creating anything", async () => {
+    const repositories = buildInMemoryRepositories();
+    const { io, out, err } = capture();
+
+    const code = await runCredentialCli(
+      ["create", "--agent", "agent-a", "--expires-in-day", "3"],
+      io,
+      { service: makeService(repositories) },
+    );
+
+    expect(code).toBe(1);
+    expect(out.join("\n")).not.toContain("amcp_");
+    expect(err.join("\n")).toContain('Unknown flag "--expires-in-day"');
+    expect(await repositories.agents.findById("agent-a")).toBeNull();
+  });
+
+  it("rejects an unknown flag on revoke and list", async () => {
+    const revoke = capture();
+    expect(
+      await runCredentialCli(["revoke", "--key-id", "k", "--force"], revoke.io, {
+        service: makeService(),
+      }),
+    ).toBe(1);
+    expect(revoke.err.join("\n")).toContain('Unknown flag "--force"');
+
+    const list = capture();
+    expect(
+      await runCredentialCli(["list", "--agent", "a", "--all"], list.io, {
+        service: makeService(),
+      }),
+    ).toBe(1);
+    expect(list.err.join("\n")).toContain('Unknown flag "--all"');
+  });
 });
 
 describe("runCredentialCli revoke / list", () => {
