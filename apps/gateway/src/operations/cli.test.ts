@@ -70,6 +70,20 @@ describe("operations CLI", () => {
     });
   });
 
+  it("tolerates the `--` delimiter a package manager forwards", async () => {
+    const code = await runOperationsCli(
+      ["--", "agent", "create", "--id", "ops-1", "--role", "OPERATOR"],
+      io,
+      deps,
+    );
+    expect(code).toBe(0);
+    expect(await repositories.agents.findById("ops-1")).toEqual({
+      id: "ops-1",
+      name: "ops-1",
+      role: "OPERATOR",
+    });
+  });
+
   it("rejects an invalid role", async () => {
     const code = await runOperationsCli(
       ["agent", "create", "--id", "x", "--role", "SUPERUSER"],
@@ -132,6 +146,41 @@ describe("operations CLI", () => {
     expect(await repositories.policies.listAll({ limit: 10, offset: 0 })).toMatchObject({
       total: 0,
     });
+  });
+
+  it("rejects a misspelled match flag instead of storing a catch-all policy", async () => {
+    const code = await runOperationsCli(
+      [
+        "policy",
+        "create",
+        "--id",
+        "p-typo",
+        "--decision",
+        "ALLOW",
+        "--reason",
+        "typo",
+        "--toool",
+        "echo",
+      ],
+      io,
+      deps,
+    );
+
+    expect(code).toBe(1);
+    expect(io.errors.join("\n")).toContain('Unknown flag "--toool"');
+    // The silent-drop behavior would have stored match={} — a policy allowing
+    // every tool. Nothing may be written.
+    expect(await repositories.policies.listAll({ limit: 10, offset: 0 })).toMatchObject({
+      total: 0,
+    });
+  });
+
+  it("rejects any flag on a command that accepts none", async () => {
+    const code = await runOperationsCli(["agent", "list", "--role", "ADMIN"], io, deps);
+
+    expect(code).toBe(1);
+    expect(io.errors.join("\n")).toContain('Unknown flag "--role"');
+    expect(io.errors.join("\n")).toContain("accepts no flags");
   });
 
   it("lists an empty approval queue", async () => {
