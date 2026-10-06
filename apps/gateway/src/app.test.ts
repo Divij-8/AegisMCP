@@ -86,6 +86,10 @@ describe("POST /mcp - parse rejection", () => {
     });
 
     expect(response.status).toBe(200);
+    // JSON-RPC bodies must be JSON: an MCP client that checks the content type
+    // (the official SDK does) must not see text/plain for a gateway-generated
+    // error response.
+    expect(response.headers.get("content-type")).toContain("application/json");
     const body = (await response.json()) as Record<string, unknown>;
     expect(body).toEqual({
       jsonrpc: "2.0",
