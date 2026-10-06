@@ -62,13 +62,33 @@ const USAGE = [
   "Requires DATABASE_URL. Output never contains secrets.",
 ].join("\n");
 
-function parseFlags(args: readonly string[]): { flags: Map<string, string>; error?: string } {
+function supportedFlags(allowed: readonly string[]): string {
+  return allowed.length === 0
+    ? "This command accepts no flags."
+    : `Supported flags: ${allowed.map((flag) => `--${flag}`).join(", ")}`;
+}
+
+/**
+ * Parse `--flag value` pairs, rejecting anything outside `allowed`.
+ *
+ * Unknown flags fail loudly. Silently ignoring one is dangerous here: a typo
+ * such as `policy create --toool echo` would otherwise drop the match
+ * constraint and store a policy matching everything, and
+ * `--role` on a command that does not assign roles would look accepted.
+ */
+function parseFlags(
+  args: readonly string[],
+  allowed: readonly string[],
+): { flags: Map<string, string>; error?: string } {
   const flags = new Map<string, string>();
   for (let index = 0; index < args.length; index++) {
     const token = args[index]!;
     if (token === "--") continue;
     if (!token.startsWith("--")) return { flags, error: `Unexpected argument "${token}"` };
     const name = token.slice(2);
+    if (!allowed.includes(name)) {
+      return { flags, error: `Unknown flag "--${name}". ${supportedFlags(allowed)}` };
+    }
     const value = args[index + 1];
     if (value === undefined || value.startsWith("--")) {
       return { flags, error: `Missing value for --${name}` };
@@ -94,7 +114,9 @@ export async function runOperationsCli(
   io: CliIo,
   deps: OperationsCliDeps,
 ): Promise<number> {
-  const [group, command, ...rest] = argv;
+  // Tolerate the "--" delimiter that package managers forward verbatim
+  // (e.g. `pnpm run operations -- agent create ...`), matching credential/cli.ts.
+  const [group, command, ...rest] = argv[0] === "--" ? argv.slice(1) : argv;
 
   if (group === undefined || group === "--help" || group === "help") {
     io.out(USAGE);
@@ -126,7 +148,7 @@ async function runAgent(
   deps: OperationsCliDeps,
 ): Promise<number> {
   if (command === "create") {
-    const { flags, error } = parseFlags(args);
+    const { flags, error } = parseFlags(args, ["id", "name", "role"]);
     if (error !== undefined) return usageError(io, "agent create", error);
     const id = flags.get("id");
     if (id === undefined || id.length === 0)
@@ -150,7 +172,7 @@ async function runAgent(
   }
 
   if (command === "revoke") {
-    const { flags, error } = parseFlags(args);
+    const { flags, error } = parseFlags(args, ["id"]);
     if (error !== undefined) return usageError(io, "agent revoke", error);
     const id = flags.get("id");
     if (id === undefined || id.length === 0)
@@ -162,7 +184,7 @@ async function runAgent(
   }
 
   if (command === "list") {
-    const { error } = parseFlags(args);
+    const { error } = parseFlags(args, []);
     if (error !== undefined) return usageError(io, "agent list", error);
     const page = await deps.repositories.agents.list({ limit: 200, offset: 0 });
     if (page.items.length === 0) {
@@ -202,7 +224,16 @@ async function runPolicy(
   }
 
   if (command === "create") {
-    const { flags, error } = parseFlags(args);
+    const { flags, error } = parseFlags(args, [
+      "id",
+      "decision",
+      "reason",
+      "tool",
+      "method",
+      "agent",
+      "server",
+      "priority",
+    ]);
     if (error !== undefined) return usageError(io, "policy create", error);
     const id = flags.get("id");
     const decision = flags.get("decision");
@@ -249,7 +280,7 @@ async function runApproval(
   deps: OperationsCliDeps,
 ): Promise<number> {
   if (command === "list") {
-    const { flags, error } = parseFlags(args);
+    const { flags, error } = parseFlags(args, ["status", "agent"]);
     if (error !== undefined) return usageError(io, "approval list", error);
     const status = flags.get("status");
     if (status !== undefined && !STATUSES.includes(status as ApprovalStatus)) {
@@ -277,7 +308,7 @@ async function runApproval(
   }
 
   if (command === "approve" || command === "deny") {
-    const { flags, error } = parseFlags(args);
+    const { flags, error } = parseFlags(args, ["id", "actor", "reason"]);
     if (error !== undefined) return usageError(io, `approval ${command}`, error);
     const id = flags.get("id");
     if (id === undefined || id.length === 0)
@@ -316,7 +347,7 @@ async function runAudit(
   deps: OperationsCliDeps,
 ): Promise<number> {
   if (command === "list") {
-    const { flags, error } = parseFlags(args);
+    const { flags, error } = parseFlags(args, ["limit"]);
     if (error !== undefined) return usageError(io, "audit list", error);
     const limit = numberFlag(flags.get("limit"), 50);
     const page = await deps.repositories.auditEvents.list({}, { limit, offset: 0 });
